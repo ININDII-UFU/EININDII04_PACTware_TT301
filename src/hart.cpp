@@ -1,16 +1,19 @@
-#include <iikitmini.h>       // Biblioteca base do framework Arduino
-#include "util/HartSerial.h" // Classe para configuração do ADC e DMA
+#include <Arduino.h>
 
-HartSerial hart;
+HardwareSerial &hartSerial = Serial2;
 
-void setup()
-{
-  //IIKit.setup();
-  hart.begin();
+void setup() {
+  Serial.begin(1200, SERIAL_8O1);           // Serial USB (PACTware) — 1200 8O1
+  hartSerial.begin(1200, SERIAL_8O1, 16, 17); // UART2 (Modem HART) — 1200 8O1, TX=17, RX=16
 }
 
-void loop()
-{
-  //IIKit.loop();
-  hart.update();
+void loop() {
+  // PACTware → HART Modem
+  while (Serial.available()) {
+    hartSerial.write(Serial.read());
+  }
+  // HART Modem → PACTware
+  while (hartSerial.available()) {
+    Serial.write(hartSerial.read());
+  }
 }
