@@ -9,7 +9,6 @@
 #include <ESPmDNS.h>
 #include <EEPROM.h>
 #include "OTA.h"
-#include "WSerial_c.h"
 #include "display_c.h"
 #include "wifimanager_c.h"
 #include "ads1115_c.h"
@@ -43,7 +42,6 @@ char DDNSName[15] = "inindkit";
 ADS1115_c ads;
 WifiManager_c wm;
 Display_c disp;
-WSerial_c WSerial;
 
 #define COILSIZE 4
 #define STATUSSIZE 5
@@ -54,37 +52,10 @@ volatile uint16_t holdingRegisters[HRSIZE] = {50, 30, 40};  //[0]: DAC, [1]: Wri
 volatile bool coils[COILSIZE] = {false, false, false, false}; //[0]: D2, [1]: D3, [2]: D4, [3]: RELÊ
 
 HardwareSerial &hartSerial = Serial2;
-TaskHandle_t hartHandle = NULL;
-void hartTask(void *pv)
-{
-  for (;;)
-  {
-    // PACTware → HART Modem
-    while (Serial.available())
-    {
-      hartSerial.write(Serial.read());
-    }
-    // HART Modem → PACTware
-    while (hartSerial.available())
-    {
-      Serial.write(hartSerial.read());
-    }
-  }
-}
-
 
 void setup() {
   Serial.begin(1200, SERIAL_8O1);             // Serial USB (PACTware) — 1200 8O1
   hartSerial.begin(1200, SERIAL_8O1, 16, 17); // UART2 (Modem HART) — 1200 8O1, TX=17, RX=16
-
-  xTaskCreate(
-      hartTask,   // Função da task
-      "hart",     // Nome para debug
-      1024,       // Tamanho da pilha (bytes)
-      NULL,       // Parâmetros (nenhum)
-      1,          // Prioridade (0–configMAX_PRIORITIES-1)
-      &hartHandle // Handle para poder gerenciar depois
-  );
 
   // EEPROM e DDNSName
   EEPROM.begin(1);
@@ -157,6 +128,10 @@ void setup() {
 }
 
 void loop() {
+  // PACTware → HART Modem
+  if (Serial.available()) hartSerial.write(Serial.read());
+  // HART Modem → PACTware
+  if (hartSerial.available()) Serial.write(hartSerial.read());
   // Handle Modbus/IP
   mb.task();
 
