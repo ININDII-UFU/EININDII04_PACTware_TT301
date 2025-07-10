@@ -134,7 +134,7 @@ void loop() {
   if (wm.getPortalRunning()) wm.process();
   // Handle Modbus/IP
   mb.task();
-      
+
   // PACTware → HART Modem
   if (Serial.available()) hartSerial.write(Serial.read());
   // HART Modem → PACTware
@@ -174,14 +174,14 @@ void loop() {
   }
 
   // Update Input Registers (read sensors)
-  mb.Hreg(0, map(ads.analogRead(1),0, 4096,0, 65535));
-  mb.Hreg(1, map(ads.analogRead(0),0, 4096,0, 65535));
-  uint16_t vlPOT1 = map(ads.analogRead(3),0, 4096,0, 65535);
-  mb.Hreg(2, vlPOT1);
-  disp.setText(2, ("P1:" + String(vlPOT1)).c_str());  
-  uint16_t vlPOT2 = map(ads.analogRead(2),0, 4096,0, 65535);  
-  mb.Hreg(3, vlPOT2);
-  disp.setText(3, ("P2:" + String(vlPOT2)).c_str());  
+  mb.Hreg(0, ads.analogRead(1));
+  mb.Hreg(1, ads.analogRead(0));
+  uint16_t vlTRM1 = ads.analogRead(3);
+  mb.Hreg(2, vlTRM1);
+  disp.setText(2, ("TRM1:" + String(vlTRM1)).c_str());  
+  uint16_t vlTRM2 = ads.analogRead(2);  
+  mb.Hreg(3, vlTRM2);
+  disp.setText(3, ("TRM2:" + String(vlTRM2)).c_str());  
   mb.Hreg(4, map(analogRead(def_pin_ADC1), 0, 4096,0, 65535));  
   mb.Hreg(5, map(analogRead(def_pin_ADC2), 0, 4096,0, 65535));
 }
