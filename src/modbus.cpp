@@ -136,9 +136,9 @@ void loop() {
   mb.task();
 
   // PACTware → HART Modem
-  if (Serial.available()) hartSerial.write(Serial.read());
+  if (Serial.available()>0) hartSerial.write(Serial.read());
   // HART Modem → PACTware
-  if (hartSerial.available()) Serial.write(hartSerial.read());
+  if (hartSerial.available()>0) Serial.write(hartSerial.read());
 
   // Check for coil writes and apply outputs
   for (uint16_t i = 0; i < COILSIZE; i++) {
