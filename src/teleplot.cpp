@@ -4,19 +4,19 @@
 #include <EEPROM.h>
 #include "display_c.h"
 #include "wifimanager_c.h"
-#include "wserial_c.h"
+#include "wserial.h"
 #include "ads1115_c.h"
 #include "jtask.h"
 #include "OTA.h"
 
-#define listenPort 8080
+#define listenPort 8080UL
 #define baudrate 115200
 #define def_pin_SCL       22    
 #define def_pin_SDA       21 
 
 ADS1115_c ads;
 WifiManager_c wm;
-WSerial_c WSerial;
+WSerial wserial;
 char DDNSName[15] = "inindkit";
 Display_c disp;
 
@@ -26,14 +26,14 @@ void managerInputFunc(void) {
     const uint16_t vlPOT2 = ads.analogRead(0);
     disp.setText(2, ("P1:" + String(vlPOT1)).c_str());
     disp.setText(3, ("P2:" + String(vlPOT2)).c_str());    
-    WSerial.plot("vlPOT1", vlPOT1);
-    WSerial.plot("vlPOT2", vlPOT2);
+    wserial.plot("vlPOT1", vlPOT1);
+    wserial.plot("vlPOT2", vlPOT2);
 }
 
 
 // ========================================================
 void setup() {
-    WSerial.begin(baudrate, listenPort);
+    Serial.begin(baudrate);
 
     EEPROM.begin(1);
     char idKit[2] = "0";
@@ -43,7 +43,7 @@ void setup() {
     if (startDisplay(&disp, def_pin_SDA, def_pin_SCL)) {
         disp.setText(1, "Inicializando...");
     } else {
-        WSerial.println("Display error.");
+        Serial.println("Display error.");
     }
     delay(50);
 
@@ -61,9 +61,10 @@ void setup() {
         disp.setText(3, "UFU Mode");
         delay(50);
     } else {
-        WSerial.println("Wifi error.\nAP MODE...");
+        Serial.println("Wifi error.\nAP MODE...");
     }
     OTA::start(DDNSName);
+    wserial.begin(&Serial, listenPort);    
     jtaskAttachFunc(managerInputFunc, 50000UL); //anexa um função e sua base de tempo para ser executada
 }
 
@@ -71,6 +72,6 @@ void loop() {
     OTA::handle();
     updateDisplay(&disp);
     if (wm.getPortalRunning()) wm.process();
-    WSerial.update();
-    jtaskLoop();
+    wserial.update();
+    if(wserial.isReady()) jtaskLoop();
 }
