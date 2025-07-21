@@ -9,7 +9,7 @@
 #include "jtask.h"
 #include "OTA.h"
 
-#define listenPort 8080UL
+#define listenPort 8080
 #define baudrate 115200
 #define def_pin_SCL       22    
 #define def_pin_SDA       21 
@@ -26,8 +26,8 @@ void managerInputFunc(void) {
     const uint16_t vlPOT2 = ads.analogRead(0);
     disp.setText(2, ("P1:" + String(vlPOT1)).c_str());
     disp.setText(3, ("P2:" + String(vlPOT2)).c_str());    
-    wserial.plot("vlPOT1", vlPOT1);
-    wserial.plot("vlPOT2", vlPOT2);
+    wserial.enviarTeleplot("vlPOT1", vlPOT1);
+    wserial.enviarTeleplot("vlPOT2", vlPOT2);
 }
 
 
@@ -64,6 +64,7 @@ void setup() {
         Serial.println("Wifi error.\nAP MODE...");
     }
     OTA::start(DDNSName);
+    ads.begin();
     wserial.begin(&Serial, listenPort);    
     jtaskAttachFunc(managerInputFunc, 50000UL); //anexa um função e sua base de tempo para ser executada
 }
@@ -72,6 +73,5 @@ void loop() {
     OTA::handle();
     updateDisplay(&disp);
     if (wm.getPortalRunning()) wm.process();
-    wserial.update();
-    if(wserial.isReady()) jtaskLoop();
+    jtaskLoop();
 }
