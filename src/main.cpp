@@ -9,7 +9,6 @@
 #include <ESPmDNS.h>
 #include <EEPROM.h>
 #include "OTA.h"
-#include "WSerial_c.h"
 #include "display_c.h"
 #include "wifimanager_c.h"
 #include "ads1115_c.h"
@@ -40,7 +39,6 @@ char DDNSName[15] = "inindkit";
 ADS1115_c ads;
 WifiManager_c wm;
 Display_c disp;
-WSerial_c WSerial;
 
 // Instância do servidor Modbus (eModbus)
 ModbusServerWiFi modbusServer;
@@ -494,10 +492,10 @@ ModbusMessage writeMultipleRegisters(ModbusMessage request)
 
 void errorMsg(String error, bool restart)
 {
-  WSerial.println(error);
+  Serial.println(error);
   if (restart)
   {
-    WSerial.println("Rebooting now...");
+    Serial.println("Rebooting now...");
     delay(2000);
     ESP.restart();
     delay(2000);
@@ -511,45 +509,12 @@ void managerInputFunc(void) {
     disp.setText(2, ("P1:" + String(vlPOT1)).c_str());
     disp.setText(3, ("P2:" + String(vlPOT2)).c_str());
 }
-
-/// @brief Hart Func//////////////////////////////////////////////////////////
-HardwareSerial &hartSerial = Serial2;
-TaskHandle_t hartHandle = NULL;
-
-void hartTask(void *pv)
-{
-  for (;;)
-  {
-    // PACTware → HART Modem
-    while (Serial.available())
-    {
-      hartSerial.write(Serial.read());
-    }
-    // HART Modem → PACTware
-    while (hartSerial.available())
-    {
-      Serial.write(hartSerial.read());
-    }
-  }
-}
-
 // ========================================================
 // setup() – inicialização do sistema
 // ========================================================
 void setup()
 {
-  Serial.begin(1200, SERIAL_8O1);             // Serial USB (PACTware) — 1200 8O1
-  hartSerial.begin(1200, SERIAL_8O1, 16, 17); // UART2 (Modem HART) — 1200 8O1, TX=17, RX=16
-
-  xTaskCreate(
-      hartTask,   // Função da task
-      "hart",     // Nome para debug
-      1024,       // Tamanho da pilha (bytes)
-      NULL,       // Parâmetros (nenhum)
-      1,          // Prioridade (0–configMAX_PRIORITIES-1)
-      &hartHandle // Handle para poder gerenciar depois
-  );
-
+  Serial.begin(19200);
   // EEPROM para ler a identificação do kit:
   EEPROM.begin(1);
   char idKit[2] = "0";
