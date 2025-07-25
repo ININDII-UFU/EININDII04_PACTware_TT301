@@ -1,260 +1,220 @@
-// coil status:       [0] def_pin_D2,   [1] def_pin_D3,   [2] def_pin_D4,             [3] def_pin_RELE,           [4]             [5]
-// Input status:      [0] def_pin_RTN1, [1] def_pin_RTN2, [2] def_pin_PUSH1,          [3] def_pin_PUSH2,          [4] def_pin_D1, [5]
-// Input Registers:   [0] POT1,         [1] POT2,         [2] Leitura 4-20mA canal 1, [3] Leitura 4-20mA canal 2, [4] ADC1,       [5] ADC2,
-// Holding Registers: [0] DAC,          [1] Write 4-20mA, [2] PWM                     [3]                         [4]             [5]
-
-#include <Arduino.h>
 #include <WiFi.h>
-#include <EEPROM.h>
-#include "OTA.h"
-#include "display_c.h"
-#include "wifimanager_c.h"
-#include "ads1115_c.h"
 
-/********** GPIO ***********/
-#define def_pin_SDA    21
-#define def_pin_SCL    22
-#define def_pin_D2     19
-#define def_pin_D3     18
-#define def_pin_D4     4
-#define def_pin_RELE   27
-#define def_pin_RTN1   2
-#define def_pin_RTN2   35
-#define def_pin_PUSH1  34
-#define def_pin_PUSH2  32
-#define def_pin_D1     23
-#define def_pin_ADC1   36
-#define def_pin_ADC2   39
-#define def_pin_W4a20  26
-#define def_pin_PWM    33
-#define def_pin_DAC1   25
+const char *ssid = "APJosue";
+const char *password = "josue32154538";
+const IPAddress local_ip(200, 19, 148, 112);
+const IPAddress gateway(200, 19, 148, 1);
+const IPAddress subnet(255, 255, 255, 0);
 
-#define CHANNEL_W4a20  0
-#define CHANNEL_PWM    1
-
-/********** HART-IP ***********/
-#define HARTIP_PORT           5094
-#define HARTIP_CONNECT_REQ    0x01
-#define HARTIP_CONNECT_ACK    0x02
-#define HARTIP_DATA_REQ       0x03
-#define HARTIP_DATA_RESP      0x04
-#define HARTIP_KEEPALIVE      0x05
-#define HARTIP_DISCONNECT     0x06
-#define HARTIP_DISCONNECT_ACK 0x07
-
-#define HART_PREAMBLE_LEN     5     // até 5 bytes 0xFF
-#define KEEPALIVE_INTERVAL    10000UL
-
-// Selecione sempre Channel 1 no DTM → hdr[6] = 1
-static const uint8_t hartChannel = 1;
-
-char     DDNSName[16] = "inindkit";
-ADS1115_c ads;
-WifiManager_c wm;
-Display_c   disp;
+WiFiServer server(5094);
 HardwareSerial &hartSerial = Serial2;
 
-WiFiServer   hartServer(HARTIP_PORT);
-WiFiClient   hartClient;
-bool         sessionOpen = false;
-uint16_t     txId        = 1;
-unsigned long lastKeep   = 0;
+#define HART_PREAMBULO 5
+#define TCP_FRAME_TIMEOUT_MS 3000
 
-// hex-dump para debug
-void logHex(const char* tag, const uint8_t* buf, size_t len) {
-  Serial.print(tag);
-  for (size_t i = 0; i < len; i++) {
-    if (buf[i] < 0x10) Serial.print('0');
-    Serial.print(buf[i], HEX);
-    Serial.print(' ');
-  }
-  Serial.println();
+enum HartIpState
+{
+    WAIT_SESSION_INIT,
+    SESSION_ESTABLISHED
+};
+HartIpState state = WAIT_SESSION_INIT;
+
+void printHex(const uint8_t *data, size_t len)
+{
+    for (size_t i = 0; i < len; ++i)
+    {
+        if (data[i] < 0x10)
+            Serial.print('0');
+        Serial.print(data[i], HEX);
+        Serial.print(' ');
+    }
+    Serial.println();
 }
 
-// Monta e envia o header HART-IP (12 bytes) + payload
-void sendHartIP(uint8_t msgType, const uint8_t* payload = nullptr, uint16_t payloadLen = 0) {
-  const uint8_t HEADER_LEN = 12;
-  uint16_t totalLen = HEADER_LEN + payloadLen;
-  uint8_t hdr[HEADER_LEN];
-
-  // bytes 0–1: comprimento big-endian
-  hdr[0] = (totalLen >> 8) & 0xFF;
-  hdr[1] = totalLen & 0xFF;
-  hdr[2] = 0x01;               // protocol ID
-  hdr[3] = msgType;            // tipo de mensagem
-  hdr[4] = (txId >> 8) & 0xFF; // transaction ID MSB
-  hdr[5] = txId & 0xFF;        // transaction ID LSB
-  txId++;
-  hdr[6] = hartChannel;        // Channel (1)
-  memset(hdr + 7, 0, 5);       // reserved
-
-  logHex(">>> IP TX hdr: ", hdr, HEADER_LEN);
-  if (payloadLen) logHex(">>> IP TX pld: ", payload, payloadLen);
-
-  hartClient.write(hdr, HEADER_LEN);
-  if (payloadLen) hartClient.write(payload, payloadLen);
+// Resposta ao Session Initiate
+void send_session_response(WiFiClient &client, const uint8_t *req, size_t len)
+{
+    uint8_t resp[32];
+    memcpy(resp, req, len);
+    resp[1] = 0x01; // Type: Response
+    resp[2] = 0x00; // ID: Session Initiate
+    client.write(resp, len);
+    Serial.print("[SEND] Session Initiate Response: ");
+    printHex(resp, len);
 }
 
-void setup() {
-  Serial.begin(115200);
-  delay(100);
-
-  // UART2 para modem HART (RX=16, TX=17)
-  hartSerial.begin(1200, SERIAL_8O1, /*RX=*/16, /*TX=*/17);
-
-  // Leitura de ID da EEPROM para SSID
-  EEPROM.begin(1);
-  char idKit = EEPROM.read(0);
-  size_t L = strlen(DDNSName);
-  DDNSName[L]   = idKit;
-  DDNSName[L+1] = '\0';
-
-  // Display
-  startDisplay(&disp, def_pin_SDA, def_pin_SCL);
-  disp.setText(1, "Inicializando...");
-
-  // Wi-Fi STA + AP para configuração
-  WiFi.mode(WIFI_STA);
-  wm.setApName(DDNSName);
-  disp.setFuncMode(true);
-  disp.setText(1, "Mode: AP");
-  disp.setText(2, "SSID: AutoConnectAP");
-  disp.setText(3, "PSWD: N/A");
-  if (wm.autoConnect("AutoConnectAP")) {
-    disp.setFuncMode(false);
-    disp.setText(1, WiFi.localIP().toString().c_str());
-    disp.setText(2, DDNSName);
-    disp.setText(3, "UFU Mode");
-    delay(50);
-  }
-
-  // OTA
-  OTA::start(DDNSName);
-
-  // Configura I/O
-  pinMode(def_pin_D2,    OUTPUT);
-  pinMode(def_pin_D3,    OUTPUT);
-  pinMode(def_pin_D4,    OUTPUT);
-  pinMode(def_pin_RELE,  OUTPUT);
-  pinMode(def_pin_RTN1,  INPUT_PULLDOWN);
-  pinMode(def_pin_RTN2,  INPUT_PULLDOWN);
-  pinMode(def_pin_PUSH1, INPUT_PULLDOWN);
-  pinMode(def_pin_PUSH2, INPUT_PULLDOWN);
-  pinMode(def_pin_D1,    INPUT_PULLDOWN);
-  pinMode(def_pin_ADC1,  INPUT);
-  pinMode(def_pin_ADC2,  INPUT);
-  pinMode(def_pin_W4a20, OUTPUT);
-  pinMode(def_pin_PWM,   OUTPUT);
-  pinMode(def_pin_DAC1,  OUTPUT);
-
-  // PWM e DAC
-  ledcSetup(CHANNEL_W4a20, 19000, 12);
-  ledcAttachPin(def_pin_W4a20, CHANNEL_W4a20);
-  ledcWrite(CHANNEL_W4a20, 0);
-
-  ledcSetup(CHANNEL_PWM, 19000, 12);
-  ledcAttachPin(def_pin_PWM, CHANNEL_PWM);
-  ledcWrite(CHANNEL_PWM, 0);
-
-  dacWrite(def_pin_DAC1, 0);
-  ads.begin();
-
-  // Inicia servidor TCP HART-IP
-  hartServer.begin();
-  Serial.printf("HART-IP TCP server iniciado na porta %d\n", HARTIP_PORT);
+// Resposta ao Pass-Through
+void send_hart_response(WiFiClient &client, const uint8_t *hart, size_t len, uint8_t seq_hi, uint8_t seq_lo)
+{
+    uint8_t resp[8 + 256];
+    resp[0] = 0x01;                    // Version
+    resp[1] = 0x01;                    // Type: Response
+    resp[2] = 0x03;                    // ID: Pass-Through
+    resp[3] = 0x00;                    // Status
+    resp[4] = seq_hi;                  // Sequence High
+    resp[5] = seq_lo;                  // Sequence Low
+    resp[6] = ((8 + len) >> 8) & 0xFF; // MsgLen (header + body)
+    resp[7] = (8 + len) & 0xFF;
+    memcpy(&resp[8], hart, len);
+    client.write(resp, 8 + len);
+    Serial.print("[SEND] Pass-Through Response: ");
+    printHex(resp, 8 + len);
 }
 
-void loop() {
-  OTA::handle();
-  updateDisplay(&disp);
-  if (wm.getPortalRunning()) wm.process();
+void setup()
+{
+    Serial.begin(115200);
+    delay(2000);
+    Serial.println("\n=== ESP32 HART-IP Gateway ===");
 
-  // 1) Aceita conexão apenas 1 vez
-  if ((!hartClient || !hartClient.connected()) && hartServer.hasClient()) {
-    hartClient = hartServer.available();
-    sessionOpen = false;
-    Serial.printf("PACTware conectou %s:%d\n",
-                  hartClient.remoteIP().toString().c_str(),
-                  hartClient.remotePort());
-    sendHartIP(HARTIP_CONNECT_REQ);
-    Serial.println(">>> CONNECT REQUEST enviado");
-  }
-
-  // 2) Keep-alive se sessão aberta
-  if (sessionOpen && millis() - lastKeep > KEEPALIVE_INTERVAL) {
-    sendHartIP(HARTIP_KEEPALIVE);
-    lastKeep = millis();
-    Serial.println(">>> KEEPALIVE enviado");
-  }
-
-  // 3) Processa HART-IP vindo do PACTware
-  if (hartClient && hartClient.connected()) {
-    const uint8_t HEADER_LEN = 12;
-    if (hartClient.available() >= HEADER_LEN) {
-      uint8_t hdr[HEADER_LEN];
-      hartClient.readBytes(hdr, HEADER_LEN);
-      uint16_t totalLen   = (hdr[0] << 8) | hdr[1];
-      uint8_t  msgType    = hdr[3];
-      uint16_t payloadLen = totalLen - HEADER_LEN;
-
-      logHex("<<< IP RX hdr: ", hdr, HEADER_LEN);
-
-      uint8_t payload[512];
-      if (payloadLen && payloadLen <= sizeof(payload)) {
-        hartClient.readBytes(payload, payloadLen);
-        logHex("<<< IP RX pld: ", payload, payloadLen);
-      }
-
-      // Trata tipos
-      switch (msgType) {
-        case HARTIP_CONNECT_ACK:
-          Serial.println("<<< CONNECT ACK recebido");
-          sessionOpen = true;
-          lastKeep = millis();
-          break;
-
-        case HARTIP_DATA_REQ:
-          if (sessionOpen && payloadLen) {
-            // envia preâmbulo 0xFF×5
-            for (int i = 0; i < HART_PREAMBLE_LEN; i++) hartSerial.write(0xFF);
-            Serial.printf(">>> Enviado %d bytes de preâmbulo\n", HART_PREAMBLE_LEN);
-            // envia quadro HART cru
-            hartSerial.write(payload, payloadLen);
-            logHex(">>> HART TX (raw): ", payload, payloadLen);
-          }
-          break;
-
-        case HARTIP_DISCONNECT:
-          Serial.println("<<< DISCONNECT recebido");
-          sendHartIP(HARTIP_DISCONNECT_ACK);
-          hartClient.stop();
-          sessionOpen = false;
-          break;
-      }
+    WiFi.mode(WIFI_STA);
+    WiFi.config(local_ip, gateway, subnet);
+    WiFi.begin(ssid, password);
+    Serial.print("Conectando ao WiFi...");
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(500);
+        Serial.print(".");
     }
-  }
+    Serial.println("\nWiFi conectado.");
+    Serial.print("Endereço IP: ");
+    Serial.println(WiFi.localIP());
+    server.begin();
+    Serial.println("Aguardando conexão TCP na porta 5094...");
 
-  // 4) Processa resposta do modem HART → DATA_RESP
-  if (sessionOpen && hartSerial.available()) {
-    static uint8_t raw[256];
-    int len = 0;
-    unsigned long t0 = millis();
-    // agrupa bytes por 50 ms
-    while (millis() - t0 < 50 && len < (int)sizeof(raw)) {
-      if (hartSerial.available()) raw[len++] = hartSerial.read();
+    hartSerial.begin(1200, SERIAL_8O1, 16, 17);
+}
+
+void loop()
+{
+    WiFiClient client = server.available();
+    if (client)
+    {
+        Serial.println("=== NOVA CONEXÃO TCP RECEBIDA ===");
+        uint8_t frame[512];
+        size_t frame_len = 0;
+        state = WAIT_SESSION_INIT;
+
+        while (client.connected())
+        {
+            unsigned long t0 = millis();
+            // 1. Lê exatamente 8 bytes do header
+            while (frame_len < 8 && (millis() - t0 < TCP_FRAME_TIMEOUT_MS))
+            {
+                if (client.available())
+                {
+                    frame[frame_len++] = client.read();
+                    t0 = millis();
+                }
+            }
+            if (frame_len < 8)
+            {
+                if (frame_len > 0)
+                    Serial.printf("[TIMEOUT] Recebeu só %d/8 bytes de header\n", (int)frame_len);
+                break;
+            }
+
+            // 2. Pega tamanho total do frame (msg_len, header + body, sempre)
+            size_t total_needed = (frame[6] << 8) | frame[7];
+            if (total_needed < 8 || total_needed > sizeof(frame))
+            {
+                Serial.printf("[ERRO] Tamanho inválido do frame: %u bytes\n", (unsigned)total_needed);
+                break;
+            }
+
+            // 3. Lê até juntar total_needed bytes no frame
+            t0 = millis();
+            while (frame_len < total_needed && (millis() - t0 < TCP_FRAME_TIMEOUT_MS))
+            {
+                if (client.available())
+                {
+                    frame[frame_len++] = client.read();
+                    t0 = millis();
+                }
+            }
+            if (frame_len < total_needed)
+            {
+                Serial.printf("[TIMEOUT] Recebeu só %d/%u bytes (header+body)\n", (int)frame_len, (unsigned)total_needed);
+                break;
+            }
+
+            // 4. Processa o pacote completo HART-IP
+            Serial.printf("[TCP] Frame completo recebido: %u bytes\nHEX:   ", (unsigned)frame_len);
+            printHex(frame, frame_len);
+
+            uint8_t msg_type = frame[1];
+            uint8_t msg_id = frame[2];
+
+            if (state == WAIT_SESSION_INIT && msg_type == 0x00 && msg_id == 0x00)
+            {
+                send_session_response(client, frame, total_needed);
+                state = SESSION_ESTABLISHED;
+            }
+            // Pass-Through Request: Type 0x00 (Request), ID 0x03 (Pass-Through)
+            else if (state == SESSION_ESTABLISHED && msg_type == 0x00 && msg_id == 0x03 && total_needed > 8)
+            {
+                size_t hart_len = total_needed - 8;
+                uint8_t *hart_cmd = &frame[8];
+
+                // Sempre envia 5 bytes de preâmbulo, independentemente do frame recebido
+                uint8_t ff[HART_PREAMBULO] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+                hartSerial.write(ff, HART_PREAMBULO);
+                // Envia o resto do comando, pulando os 0xFF iniciais se vierem a mais
+                size_t cmd_start = 0;
+                while (cmd_start < hart_len && hart_cmd[cmd_start] == 0xFF)
+                    cmd_start++;
+                hartSerial.write(hart_cmd + cmd_start, hart_len - cmd_start);
+                Serial.print("[UART] >> ");
+                printHex(hart_cmd, hart_len);
+
+                // Leitura da resposta do modem HART
+                unsigned long uart_t0 = millis();
+                size_t resp_len = 0;
+                uint8_t hart_resp[256];
+                while ((millis() - uart_t0 < 250))
+                {
+                    while (hartSerial.available() && resp_len < sizeof(hart_resp))
+                    {
+                        hart_resp[resp_len++] = hartSerial.read();
+                    }
+                }
+                if (resp_len > 0)
+                {
+                    size_t off = 0;
+                    while (off < resp_len && hart_resp[off] == 0xFF) off++;
+                    size_t hart_data_len = resp_len - off;
+                    if (hart_data_len > 0)
+                    {
+                        send_hart_response(client, hart_resp + off, hart_data_len, frame[4], frame[5]);
+                        Serial.print("[UART] << ");
+                        printHex(hart_resp + off, hart_data_len);
+                    }
+                    else
+                    {
+                        Serial.println("[WARN] Resposta HART sem dados após preâmbulo!");
+                    }
+                }
+                else
+                {
+                    Serial.println("[WARN] Nenhuma resposta do modem HART");
+                }
+            }
+            else if (msg_type == 0x00 && msg_id == 0x01)
+            {
+                Serial.println("[INFO] Session Close recebido. Fechando sessão.");
+                client.stop(); // se preferir.
+                break;         //
+            }
+            else
+            {
+                Serial.printf("[ERRO] Comando inválido. type=0x%02X id=0x%02X\n", msg_type, msg_id);
+            }
+
+            // Limpa buffer para próximo frame
+            frame_len = 0;
+        }
+        client.stop();
+        Serial.println("=== CONEXÃO TCP ENCERRADA ===");
     }
-    if (len > 0) {
-      // descarta até 5 pré-ambles 0xFF
-      int start = 0;
-      while (start < len && start < HART_PREAMBLE_LEN && raw[start] == 0xFF) {
-        start++;
-      }
-      int actualLen = len - start;
-      if (actualLen > 0) {
-        logHex("<<< HART RAW RX (stripped): ", raw + start, actualLen);
-        sendHartIP(HARTIP_DATA_RESP, raw + start, actualLen);
-        Serial.println(">>> DATA_RESPONSE enviado (sem preâmbulo)");
-      }
-    }
-  }
+    delay(10);
 }

@@ -590,11 +590,11 @@ void setup()
   // Inicializa o servidor Modbus (porta 502, ID 1, timeout 2000ms)
   if (!modbusServer.start(502, 1, 2000))
   {
-    WSerial.println("Erro ao iniciar o servidor Modbus TCP (eModbus)!");
+    Serial.println("Erro ao iniciar o servidor Modbus TCP (eModbus)!");
     while (1)
       ;
   }
-  WSerial.println("Servidor Modbus TCP (eModbus) iniciado com sucesso!");
+  Serial.println("Servidor Modbus TCP (eModbus) iniciado com sucesso!");
 
   // Registra os callbacks para os respectivos códigos de função
   modbusServer.registerWorker(1, 0x2B, &readDeviceIdentification); // suporte a Read Device Identification
@@ -615,7 +615,6 @@ void setup()
 void loop()
 {
   OTA::handle();
-  updateWSerial(&WSerial);
   updateDisplay(&disp);
   if (wm.getPortalRunning()) wm.process();
   managerInputFunc();
