@@ -23,22 +23,12 @@ void send_log(const char *prefix, const uint8_t *data, size_t len) {
   }
 }
 
-void printHex(const uint8_t *data, size_t len) {
-  for (size_t i = 0; i < len; ++i) {
-    if (data[i] < 0x10) Serial.print('0');
-    Serial.print(data[i], HEX);
-    Serial.print(' ');
-  }
-  Serial.println();
-}
 
 void setup() {
   Serial.begin(1200, SERIAL_8O1);           // Serial USB (PACTware)
   hartSerial.begin(1200, SERIAL_8O1, 16, 17); // UART2 (Modem HART)
 
   // Setup WiFi
-  Serial2.begin(115200); // Para debug na Serial2 se precisar (opcional)
-  Serial2.println("\n=== ESP32 Serial ↔ HART Modem + TCP LOG ===");
   WiFi.mode(WIFI_STA);
   WiFi.config(local_ip, gateway, subnet);
   WiFi.begin(ssid, password);
@@ -46,9 +36,6 @@ void setup() {
     delay(500);
   }
   logServer.begin();
-  Serial2.print("WiFi OK. IP: ");
-  Serial2.println(WiFi.localIP());
-  Serial2.println("Aguardando conexão TCP para LOG na porta 5000...");
 }
 
 void loop() {
@@ -62,7 +49,7 @@ void loop() {
     uint8_t b = Serial.read();
     hartSerial.write(b);
     send_log("[TX] ", &b, 1);
-    printHex(&b, 1);
+
   }
 
   // HART Modem → PACTware
@@ -70,6 +57,5 @@ void loop() {
     uint8_t b = hartSerial.read();
     Serial.write(b);
     send_log("[RX] ", &b, 1);
-    printHex(&b, 1);
   }
 }
