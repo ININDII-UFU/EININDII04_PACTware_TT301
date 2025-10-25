@@ -31,10 +31,6 @@ A cada um(a), nosso agradecimento pelo compromisso, pela parceria e pela qualida
 
 O **PACTware** é uma ferramenta de software baseada em FDT/DTM amplamente utilizada para configuração, parametrização, diagnóstico e manutenção de instrumentos de campo. Sua aplicação proporciona maior integração entre dispositivos de diferentes fabricantes, permitindo um ambiente unificado para gestão de instrumentos, contribuindo para maior eficiência e confiabilidade dos processos.
 
-Quanto ao **Controle de Nível**, tem-se como um dos pilares da instrumentação de processos, aplicado em tanques, reservatórios e sistemas de armazenamento para garantir segurança operacional, qualidade do produto e eficiência produtiva. Neste roteiro, o controle de nível será desenvolvido no **CODESYS** — ambiente de programação que permite a implementação de lógicas de controle discretas e contínuas, incluindo estratégias de controle PID.
-
-A associação entre o uso do PACTware e a prática de controle de nível no CODESYS possibilita ao aluno compreender os recursos de configuração e diagnóstico de instrumentos, a programação e a execução de estratégias de controle aplicadas em processos industriais.
-
 ---
 
 ## 2. Objetivo
